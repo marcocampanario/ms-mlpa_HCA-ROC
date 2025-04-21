@@ -1,5 +1,6 @@
 ### SCRIPT para clusterizacao de genes com base em seu padrao de metilacao
 
+### LICENSE CC BY-NC 4.0
 ### Bioinformata: Marco Antonio Campanario (#macs)
 ### Contato: macscampanario@gmail.com
 
