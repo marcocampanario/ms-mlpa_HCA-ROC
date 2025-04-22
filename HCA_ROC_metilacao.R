@@ -1,8 +1,8 @@
 ### SCRIPT para clusterizacao de genes com base em seu padrao de metilacao
 
-### LICENSE CC BY-NC 4.0
 ### Bioinformata: Marco Antonio Campanario (#macs)
 ### Contato: macscampanario@gmail.com
+### Ultima atualizacao: 22.04.2025
 
 library(grid)
 library(openxlsx)
@@ -276,6 +276,39 @@ geom_text(data = auc,
             inherit.aes = FALSE,
             size = 4)
 
+#### ESTADO EMPIRICO DE METILACAO ----------------------------------------------
+
+data_empirico <- data
+
+limiares <- list(
+  "CDH13" = coords_best_CDH13$threshold,
+  "CHFR" = coords_best_CHFR$threshold,
+  "ESR1" = coords_best_ESR1$threshold,
+  "RARB" = coords_best_RARB$threshold
+)
+
+for (gene in names(limiares)) {
+  # acha a coluna com os dados de metilacao
+  idx <- grep(paste0("^", gene, "$"), names(data_empirico))
+  
+  if (length(idx) == 1) {
+    col_met <- data_empirico[[idx]]
+    limiar <- limiares[[gene]]
+    estado_empirico <- ifelse(col_met > limiar, 2, 1)
+    
+    # adiciona a nova coluna ao lado direito da coluna original
+    nova_coluna <- data.frame(estado_empirico)
+    colnames(nova_coluna) <- paste0(gene, "_empirico")
+    data_empirico <- cbind(
+      data_empirico[ , 1:idx],
+      nova_coluna,
+      if (idx < ncol(data_empirico)) data_empirico[ , (idx + 1):ncol(data_empirico)] else NULL
+    )
+  } else {
+    warning(paste("Gene", gene, "não encontrado ou encontrado mais de uma vez."))
+  }
+}
+
 # FIGURAS E TABELAS ------------------------------------------------------------
 
 # DENDROGRAMA
@@ -330,6 +363,8 @@ coords_all_CHFR
 AUC <- auc %>%
   select(c("name", "AUC", "best_threshold"))
 names(AUC) <- c("genes", "auc", "best_threshold")
+# TABELA DADOS EMPIRICOS
+data_empirico
 
 # TABELA AGREGADA
 wb <- createWorkbook()
@@ -342,7 +377,9 @@ writeData(wb, "RARB", coords_all_RARB)
 addWorksheet(wb, "CHFR")
 writeData(wb, "CHFR", coords_all_CHFR)
 addWorksheet(wb, "AUC_best_threshold")
-writeData(wb, "AUC_best_threshold", AUC)
+writeData(wb, "AUC_best_threshold", data_empirico)
+addWorksheet(wb, "data_empirico")
+writeData(wb, "data_empirico", data_empirico)
 saveWorkbook(wb, "tabelas_roc.xlsx", overwrite = TRUE)
 
 
@@ -371,5 +408,8 @@ genes_plot +
             inherit.aes = FALSE,
             size = 4)
 dev.off()
+
+
+
 
 
