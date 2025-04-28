@@ -233,6 +233,69 @@ CHFR <- ggplot(roc, aes(d = D, m = CHFR)) +
   style_roc()
 direct_label(CHFR, labels = "CHFR", nudge_y = -.2)
 
+## p-valores (Teste U de Mann-Whitney / Wilcoxon rank-sum test)
+## Nao recomendado para dados com muitos valores identicos (0)
+
+genes <- c("ESR1", "CDH13", "RARB", "CHFR")
+resultados <- data.frame(Gene = character(), AUC = numeric(), P_Value = numeric())
+for (g in genes) {
+  predictor <- roc[[g]]  # met %
+  group <- roc$D  # 0 = normal, 1 = tumor
+  
+  # ROC/AUC
+  r <- roc(group, predictor)
+  auc_value <- auc(r)
+  
+  # Wilcoxon rank-sum test
+  wilcox_res <- wilcox.test(predictor ~ group)
+  p_val <- wilcox_res$p.value
+
+  resultados <- rbind(resultados, data.frame(genes = g, AUC = as.numeric(auc_value), P_Value = p_val))
+}
+print(resultados)
+
+## Alternativa: Teste de Permutacao
+
+# AUC
+calc_auc <- function(true_labels, predictions) {
+  r <- roc(true_labels, predictions)
+  return(auc(r))
+}
+
+# Permutacoes
+n_permutations <- 100000
+
+results <- data.frame(Gene = character(), AUC = numeric(), P_Value = numeric())
+
+# Genes
+genes <- c("ESR1", "CDH13", "RARB", "CHFR")
+
+# Loop
+for (g in genes) {
+  
+  # Met %
+  predictor <- roc[[g]]
+  
+  # AUC Observada
+  observed_auc <- calc_auc(roc$D, predictor)
+  
+  # Permutacoes
+  permuted_aucs <- numeric(n_permutations)
+  set.seed(42)  # Reprodutibilidade
+  for (i in 1:n_permutations) {
+    permuted_labels <- sample(roc$D)  # Aleatorizacao
+    permuted_aucs[i] <- calc_auc(permuted_labels, predictor)  # AUC permutada
+  }
+  
+  # P-valor: Proporcao de AUCs permutadas maiores ou iguais a AUC observada
+  p_value <- mean(permuted_aucs >= observed_auc)
+  
+  results <- rbind(results, data.frame(genes = g, AUC = observed_auc, P_Value = p_value))
+}
+
+#
+print(results)
+                                 
 ## Visualizacao de todos os 4
 
 # criar objeto novo para trabalhar a visualizacao conjunta
