@@ -233,69 +233,6 @@ CHFR <- ggplot(roc, aes(d = D, m = CHFR)) +
   style_roc()
 direct_label(CHFR, labels = "CHFR", nudge_y = -.2)
 
-## p-valores (Teste U de Mann-Whitney / Wilcoxon rank-sum test)
-## Nao recomendado para dados com muitos valores identicos (0)
-
-genes <- c("ESR1", "CDH13", "RARB", "CHFR")
-resultados <- data.frame(Gene = character(), AUC = numeric(), P_Value = numeric())
-for (g in genes) {
-  predictor <- roc[[g]]  # met %
-  group <- roc$D  # 0 = normal, 1 = tumor
-  
-  # ROC/AUC
-  r <- roc(group, predictor)
-  auc_value <- auc(r)
-  
-  # Wilcoxon rank-sum test
-  wilcox_res <- wilcox.test(predictor ~ group)
-  p_val <- wilcox_res$p.value
-
-  resultados <- rbind(resultados, data.frame(genes = g, AUC = as.numeric(auc_value), P_Value = p_val))
-}
-print(resultados)
-
-## Alternativa: Teste de Permutacao
-
-# AUC
-calc_auc <- function(true_labels, predictions) {
-  r <- roc(true_labels, predictions)
-  return(auc(r))
-}
-
-# Permutacoes
-n_permutations <- 100000
-
-results <- data.frame(Gene = character(), AUC = numeric(), P_Value = numeric())
-
-# Genes
-genes <- c("ESR1", "CDH13", "RARB", "CHFR")
-
-# Loop
-for (g in genes) {
-  
-  # Met %
-  predictor <- roc[[g]]
-  
-  # AUC Observada
-  observed_auc <- calc_auc(roc$D, predictor)
-  
-  # Permutacoes
-  permuted_aucs <- numeric(n_permutations)
-  set.seed(42)  # Reprodutibilidade
-  for (i in 1:n_permutations) {
-    permuted_labels <- sample(roc$D)  # Aleatorizacao
-    permuted_aucs[i] <- calc_auc(permuted_labels, predictor)  # AUC permutada
-  }
-  
-  # P-valor: Proporcao de AUCs permutadas maiores ou iguais a AUC observada
-  p_value <- mean(permuted_aucs >= observed_auc)
-  
-  results <- rbind(results, data.frame(genes = g, AUC = observed_auc, P_Value = p_value))
-}
-
-#
-print(results)
-                                 
 ## Visualizacao de todos os 4
 
 # criar objeto novo para trabalhar a visualizacao conjunta
@@ -361,7 +298,7 @@ for (gene in names(limiares)) {
     
     # adiciona a nova coluna ao lado direito da coluna original
     nova_coluna <- data.frame(estado_empirico)
-    colnames(nova_coluna) <- paste0(gene, "_empirico")
+    colnames(nova_coluna) <- paste0(gene, "_CAT_empirico")
     data_empirico <- cbind(
       data_empirico[ , 1:idx],
       nova_coluna,
@@ -371,6 +308,99 @@ for (gene in names(limiares)) {
     warning(paste("Gene", gene, "não encontrado ou encontrado mais de uma vez."))
   }
 }
+
+#### COMPARACAO DE FREQUENCIAS -------------------------------------------------
+
+# cria a tabela de frequencia
+
+freq <- data_empirico %>%
+  mutate(Tecido_CAT = c(rep("tum", 81), rep("adj", 15)))
+
+freq <- freq %>%
+  select(names(freq)[c(1, 2, 23:82, 87)]) %>%
+  select(matches("_CAT"))
+
+# transforma em formato longo
+freq_long <- freq %>%
+  pivot_longer(
+    cols = -Tecido_CAT, # todas as colunas menos ("Tecido_CAT")
+    names_to = "gene",
+    values_to = "metilacao"
+  ) %>%
+  filter(metilacao != 999)  # remove os valores 999
+
+# contagem e porcentagem
+resumo <- freq_long %>%
+  group_by(Tecido_CAT, gene, metilacao) %>%
+  summarise(N = n(), .groups = "drop") %>%
+  group_by(Tecido_CAT, gene) %>%
+  mutate(PCT = 100 * N / sum(N)) %>%
+  ungroup()
+
+# nomeia colunas para formato amplo
+resumo <- resumo %>%
+  mutate(met_status = paste0("N_", Tecido_CAT, "_", metilacao)) %>%
+  select(gene, met_status, N) %>%
+  pivot_wider(names_from = met_status, values_from = N, values_fill = 0) %>%
+  left_join(
+    resumo %>%
+      mutate(met_status = paste0("PCT_", Tecido_CAT, "_", metilacao)) %>%
+      select(gene, met_status, PCT) %>%
+      pivot_wider(names_from = met_status, values_from = PCT, values_fill = 0),
+    by = "gene"
+  ) %>%
+  mutate(gene = str_remove_all(gene, "_CAT"))
+
+# prepara os genes para serem testados por qui-quadrado OU Fisher
+
+genes <- unique(freq_long$gene)
+
+# data frame para armazenar os resultados
+resultados <- data.frame(
+  gene = character(),
+  p_value = numeric(),
+  metodo = character(),
+  stringsAsFactors = FALSE
+)
+
+# para cada gene, fazemos o teste
+for (g in genes) {
+  sub <- freq_long %>%
+    filter(gene == g & metilacao %in% c(1, 2)) %>%
+    mutate(metilado = ifelse(metilacao == 2, "sim", "nao")) %>%
+    count(Tecido_CAT, metilado) %>%
+    pivot_wider(names_from = metilado, values_from = n, values_fill = 0)
+  
+  # garante que ambas as colunas existam e mostra quais genes nao serao testados
+  if (!all(c("sim", "nao") %in% colnames(sub))) {
+    message("Pulando gene: ", g, " (dados incompletos)")
+    next
+  }
+  
+  # cria matriz de contingencia
+  tab <- as.matrix(sub[, c("sim", "nao")])
+  rownames(tab) <- sub$Tecido_CAT
+  
+  # escolhe o teste apropriado
+  if (any(tab < 5)) {
+    teste <- fisher.test(tab)
+    metodo <- "fisher"
+  } else {
+    teste <- chisq.test(tab)
+    metodo <- "qui-quadrado"
+  }
+  
+  resultados <- rbind(resultados, data.frame(
+    gene = g,
+    p_value = teste$p.value,
+    metodo = metodo
+  ))
+}
+
+# adicionar coluna com p ajustado (FDR)
+resultados <- resultados %>%
+  mutate(p_adj = p.adjust(p_value, method = "fdr")) %>%
+  mutate(gene = str_remove_all(gene, "_CAT"))
 
 # FIGURAS E TABELAS ------------------------------------------------------------
 
@@ -428,6 +458,10 @@ AUC <- auc %>%
 names(AUC) <- c("genes", "auc", "best_threshold")
 # TABELA DADOS EMPIRICOS
 data_empirico
+# TABELA DE FREQUENCIA
+resumo
+# TABELA P-VALORES DE FREQUENCIA
+resultados
 
 # TABELA AGREGADA
 wb <- createWorkbook()
@@ -443,7 +477,12 @@ addWorksheet(wb, "AUC_best_threshold")
 writeData(wb, "AUC_best_threshold", data_empirico)
 addWorksheet(wb, "data_empirico")
 writeData(wb, "data_empirico", data_empirico)
+addWorksheet(wb, "freq")
+writeData(wb, "freq", resumo)
+addWorksheet(wb, "comp_freq")
+writeData(wb, "comp_freq", resultados)
 saveWorkbook(wb, "tabelas_roc.xlsx", overwrite = TRUE)
+
 
 
 # CURVAS ROC - VISUALIZACAO CONJUNTA
@@ -471,8 +510,3 @@ genes_plot +
             inherit.aes = FALSE,
             size = 4)
 dev.off()
-
-
-
-
-
